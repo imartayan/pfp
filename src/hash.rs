@@ -12,7 +12,7 @@ pub const MUL_HASH: HT = 0xf1357aea2e62a9c5;
 /// Hash a single integer.
 #[inline(always)]
 pub(crate) const fn hash_one(x: HT) -> HT {
-    x * MUL_HASH
+    x.wrapping_mul(MUL_HASH)
 }
 
 /// Merges the hashes of two sequences.
@@ -74,3 +74,23 @@ impl Iterator for RollingHashIterator<'_> {
 }
 
 impl ExactSizeIterator for RollingHashIterator<'_> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_repeated_seq() {
+        const LEN: usize = 1000;
+        let mut seq = [0u8; LEN];
+        rand::fill(&mut seq);
+        let mut repeated = Vec::from(seq);
+        repeated.extend_from_slice(&seq);
+        repeated.extend_from_slice(&seq);
+
+        for window_size in 1..=50 {
+            let hashes: Vec<_> = RollingHashIterator::new(&repeated, window_size).collect();
+            assert_eq!(hashes[0..LEN], hashes[LEN..(2 * LEN)]);
+        }
+    }
+}

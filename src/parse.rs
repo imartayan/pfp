@@ -68,7 +68,7 @@ pub fn parse_seq_with_vec(
     let mut window_hash_it = RollingHashIterator::new(seq, w);
     let mut prefix = (0, 0);
     let mut phrase_hash = 0u64;
-    let mut phrase_len = 0u32;
+    let mut phrase_len = 0;
 
     for window_hash in window_hash_it.by_ref() {
         let long_hash = hash_one(window_hash);
@@ -119,7 +119,7 @@ pub fn overlapping_ranges(
 
 /// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters, using multiple threads.
 ///
-/// Note that this will automatically switch to `parse_seq` if the sequence is short.
+/// Note that this will automatically switch to [`parse_seq`] if the sequence is short.
 ///
 /// This is a wrapper for [`parse_seq_par_with_vecs`] that allocates new vectors to store the parse.
 #[inline(always)]
@@ -137,7 +137,7 @@ pub fn parse_seq_par(seq: &[u8], w: usize, p: usize, threads: usize) -> Parse {
 ///
 /// `vecs_hash` and `vecs_len` should contain at least `threads` vectors.
 ///
-/// Note that this will automatically switch to `parse_seq` if the sequence is short.
+/// Note that this will automatically switch to [`parse_seq`] if the sequence is short.
 pub fn parse_seq_par_with_vecs(
     seq: &[u8],
     w: usize,
@@ -167,7 +167,8 @@ pub fn parse_seq_par_with_vecs(
     for i in 1..threads {
         let (suffix_hash, suffix_len) = borders[i - 1].1;
         let (prefix_hash, prefix_len) = borders[i].1;
-        let border_hash = merge_hashes(suffix_hash, prefix_hash, prefix_len);
+        #[allow(clippy::unnecessary_cast)]
+        let border_hash = merge_hashes(suffix_hash, prefix_hash, prefix_len as u32);
         let border_len = suffix_len + prefix_len - w as LT + 1;
         phrases.push(border_hash);
         phrases_len.push(border_len);
@@ -207,7 +208,7 @@ impl<'a> ParseIterator<'a> {
     ) -> Self {
         let mut window_hash_it = RollingHashIterator::new(seq, w);
         let mut phrase_hash = 0u64;
-        let mut phrase_len = 0u32;
+        let mut phrase_len = 0;
         let hash_bound = HT::MAX / p as HT + 1;
         for window_hash in window_hash_it.by_ref() {
             let long_hash = hash_one(window_hash);
@@ -256,5 +257,31 @@ impl Iterator for ParseIterator<'_> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let (lo, hi) = self.window_hash_it.size_hint();
         (lo / self.p * 9 / 10, hi.map(|hi| hi / self.p * 11 / 10))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_repeated_seq() {
+        const LEN: usize = 10000;
+        let mut seq = [0u8; LEN];
+        rand::fill(&mut seq);
+        let mut repeated = Vec::from(seq);
+        repeated.extend_from_slice(&seq);
+        repeated.extend_from_slice(&seq);
+
+        for window_size in 1..=50 {
+            let parse = parse_seq(&repeated, window_size, 100);
+            let mut idx = 0;
+            let mut start = 0;
+            while start < LEN {
+                start += parse.phrases_len[idx] as usize - window_size;
+                idx += 1;
+            }
+            assert_eq!(parse.phrases[0..idx], parse.phrases[idx..(2 * idx)]);
+        }
     }
 }
