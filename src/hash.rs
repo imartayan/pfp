@@ -34,6 +34,7 @@ impl<'a> RollingHashIterator<'a> {
     /// Builds a new [`RollingHashIterator`] over windows of size `window_size` in `seq`.
     #[inline(always)]
     pub fn new(seq: &'a [u8], window_size: usize) -> Self {
+        assert!(window_size > 0, "window_size must be > 0");
         let mut hash = 0u64;
         let mut in_ = seq.iter().copied();
         let out_ = seq.iter().copied();
@@ -43,7 +44,7 @@ impl<'a> RollingHashIterator<'a> {
         Self {
             in_out: in_.zip(out_),
             hash,
-            rot: window_size as u32,
+            rot: (window_size - 1) as u32,
         }
     }
 }
