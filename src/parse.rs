@@ -263,12 +263,14 @@ impl Iterator for ParseIterator<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngCore;
+    use rand::SeedableRng;
 
     #[test]
     fn test_parse_repeated_seq() {
         const LEN: usize = 10000;
         let mut seq = [0u8; LEN];
-        rand::fill(&mut seq);
+        rand_xoshiro::Xoshiro512StarStar::from_os_rng().fill_bytes(&mut seq);
         let mut repeated = Vec::from(seq);
         repeated.extend_from_slice(&seq);
         repeated.extend_from_slice(&seq);
