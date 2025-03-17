@@ -12,13 +12,13 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
     steps:
-      - name: Checkout repository and submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Setup Rust (nightly)
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
       - name: Configure cache
         uses: Swatinem/rust-cache@v2
       - name: Setup pages
