@@ -26,7 +26,8 @@ struct Args {
     threads: Option<usize>,
 }
 
-fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> Dict {
+fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> (usize, Dict) {
+    let mut num_phrases = 0;
     let mut dict = Dict::default();
     let (reader, _) = from_path(path).expect("Failed to open input file");
     let mut reader = fasta::Reader::new(reader);
@@ -41,9 +42,10 @@ fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> Di
         } else {
             parse_seq(&seq, w, p)
         };
+        num_phrases += parse.phrases.len();
         dict.extend(parse.phrases.iter().copied().zip(parse.phrases_len));
     }
-    dict
+    (num_phrases, dict)
 }
 
 fn main() {
@@ -65,12 +67,13 @@ fn main() {
         if threads > 1 { "s" } else { "" }
     );
     let start_parse = Instant::now();
-    let dict = parse_file(w, p, path, threads);
+    let (num_phrases, dict) = parse_file(w, p, path, threads);
     let elapsed = start_parse.elapsed().as_secs_f64();
     eprintln!("Parsed in {:.02} s", elapsed);
-    let num_phrases = dict.len();
-    let len_phrases = dict.into_values().map(|len| len as usize).sum::<usize>();
-    eprintln!("number of distinct phrases = {num_phrases}");
-    eprintln!("length of distinct phrases = {len_phrases}");
-    eprintln!("pi = {}", num_phrases + len_phrases);
+    let num_distinct_phrases = dict.len();
+    let len_distinct_phrases = dict.into_values().map(|len| len as usize).sum::<usize>();
+    eprintln!("number of phrases (w/ rep) = {num_phrases}");
+    eprintln!("number of distinct phrases = {num_distinct_phrases}");
+    eprintln!("length of distinct phrases = {len_distinct_phrases}");
+    eprintln!("pi = {}", num_phrases + len_distinct_phrases);
 }
