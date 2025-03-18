@@ -83,7 +83,7 @@ mod tests {
     fn test_hash_repeated_seq() {
         const LEN: usize = 1000;
         let mut seq = [0u8; LEN];
-        rand::fill(&mut seq);
+        fastrand::fill(&mut seq);
         let mut repeated = Vec::from(seq);
         repeated.extend_from_slice(&seq);
         repeated.extend_from_slice(&seq);

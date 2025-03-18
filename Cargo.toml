@@ -1,23 +1,22 @@
 [package]
 name = "pfp"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rayon = "1.10"
 
 [dev-dependencies]
 clap = { version = "4.5", features = ["derive"] }
+fastrand = "2.3"
 niffler = "3.0"
 rand = "0.9"
-rand_xoshiro = "0.7"
 rustc-hash = "2.1"
 seq_io = "0.3"
 
 [profile.release]
 opt-level = 3
 lto = "fat"
-debug = true
 
 [profile.dev]
 opt-level = 1

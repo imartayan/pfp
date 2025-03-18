@@ -1,6 +1,6 @@
 //! Prefix-free parsing.
 
-use crate::hash::{hash_one, merge_hashes, RollingHashIterator, HT};
+use crate::hash::{HT, RollingHashIterator, hash_one, merge_hashes};
 use core::ops::Range;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -263,14 +263,12 @@ impl Iterator for ParseIterator<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::RngCore;
-    use rand::SeedableRng;
 
     #[test]
     fn test_parse_repeated_seq() {
         const LEN: usize = 10000;
         let mut seq = [0u8; LEN];
-        rand_xoshiro::Xoshiro512StarStar::from_os_rng().fill_bytes(&mut seq);
+        fastrand::fill(&mut seq);
         let mut repeated = Vec::from(seq);
         repeated.extend_from_slice(&seq);
         repeated.extend_from_slice(&seq);
