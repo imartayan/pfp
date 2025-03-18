@@ -93,4 +93,22 @@ mod tests {
             assert_eq!(hashes[0..LEN], hashes[LEN..(2 * LEN)]);
         }
     }
+
+    #[test]
+    fn test_merge_hashes() {
+        const LEN: usize = 1000;
+        let mut seq = [0u8; LEN];
+        fastrand::fill(&mut seq);
+
+        let window_size = 100;
+        for left_w in 1..window_size {
+            let right_w = window_size - left_w;
+            let left_iter = RollingHashIterator::new(&seq, left_w);
+            let right_iter = RollingHashIterator::new(&seq[left_w..], right_w);
+            let full_iter = RollingHashIterator::new(&seq, window_size);
+            for ((h1, h2), h) in left_iter.zip(right_iter).zip(full_iter) {
+                assert_eq!(merge_hashes(h1, h2, right_w as u32), h);
+            }
+        }
+    }
 }
