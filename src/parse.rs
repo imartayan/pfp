@@ -61,14 +61,18 @@ pub fn parse_seq_with_vec(
     vec_hash: &mut Vec<HT>,
     vec_len: &mut Vec<LT>,
 ) -> ((HT, LT), (HT, LT)) {
-    let expected_len = seq.len() / p * 11 / 10;
+    let expected_len = seq.len() / p * (w + 1) / w;
     let hash_bound = HT::MAX / p as HT + 1;
     vec_hash.reserve(expected_len);
     vec_len.reserve(expected_len);
     let mut window_hash_it = RollingHashIterator::new(seq, w);
     let mut prefix = (0, 0);
     let mut phrase_hash = 0u64;
-    let mut phrase_len = 0;
+    // we start at w - 1 because the very first iteration of the loop
+    // will always increment `phrase_len` even before we check if the
+    // hash is a trigger, and after that increment, we want the current
+    // phrase length to be `w`.
+    let mut phrase_len = w as LT - 1;
 
     for window_hash in window_hash_it.by_ref() {
         let long_hash = hash_one(window_hash);
@@ -150,13 +154,17 @@ pub fn parse_seq_par_with_vecs(
         return parse_seq(seq, w, p); // TODO avoid allocation?
     }
 
+    let overlap = w as LT - 1;
     let borders: Vec<_> = (
-        overlapping_ranges(0..seq.len(), threads, w - 1),
+        overlapping_ranges(0..seq.len(), threads, overlap as usize),
         &mut vecs_hash[..threads],
         &mut vecs_len[..threads],
     )
         .into_par_iter()
-        .map(|(range, vec_hash, vec_len)| parse_seq_with_vec(&seq[range], w, p, vec_hash, vec_len))
+        .map(|(range, vec_hash, vec_len)| {
+            let (pref, suf) = parse_seq_with_vec(&seq[range], w, p, vec_hash, vec_len);
+            (pref, suf)
+        })
         .collect();
 
     let num_phrases = vecs_hash[..threads].iter().map(|v| v.len()).sum::<usize>() + threads - 1;
@@ -166,10 +174,10 @@ pub fn parse_seq_par_with_vecs(
     phrases_len.extend(&vecs_len[0]);
     for i in 1..threads {
         let (suffix_hash, suffix_len) = borders[i - 1].1;
-        let (prefix_hash, prefix_len) = borders[i].1;
+        let (prefix_hash, prefix_len) = borders[i].0;
         #[allow(clippy::unnecessary_cast)]
-        let border_hash = merge_hashes(suffix_hash, prefix_hash, prefix_len as u32);
-        let border_len = suffix_len + prefix_len - w as LT + 1;
+        let border_hash = merge_hashes(suffix_hash, prefix_hash, prefix_len as u32 - overlap);
+        let border_len = (suffix_len + prefix_len) - overlap;
         phrases.push(border_hash);
         phrases_len.push(border_len);
         phrases.extend(&vecs_hash[i]);
