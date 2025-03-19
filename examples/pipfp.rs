@@ -1,8 +1,8 @@
 use clap::Parser;
 use niffler::send::from_path;
 use pfp::hash::HT;
-use pfp::parse::{parse_seq, parse_seq_par, LT};
-use rayon::{current_num_threads, ThreadPoolBuilder};
+use pfp::parse::{LT, parse_seq, parse_seq_par};
+use rayon::{ThreadPoolBuilder, current_num_threads};
 use seq_io::fasta::{self, Record};
 use std::path::Path;
 use std::time::Instant;
