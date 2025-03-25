@@ -292,4 +292,20 @@ mod tests {
             assert_eq!(parse.phrases[0..idx], parse.phrases[idx..(2 * idx)]);
         }
     }
+
+    #[test]
+    fn test_parse_par() {
+        const LEN: usize = 1_000_000;
+        let mut seq = vec![0u8; LEN];
+        fastrand::fill(&mut seq);
+
+        for window_size in 1..=50 {
+            let parse = parse_seq(&seq, window_size, 100);
+            let parse_par = parse_seq_par(&seq, window_size, 100, 4);
+            assert_eq!(parse.prefix, parse_par.prefix);
+            assert_eq!(parse.suffix, parse_par.suffix);
+            assert_eq!(parse.phrases, parse_par.phrases);
+            assert_eq!(parse.phrases_len, parse_par.phrases_len);
+        }
+    }
 }
