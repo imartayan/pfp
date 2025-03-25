@@ -9,19 +9,79 @@ pub type LT = u32;
 
 const SINGLE_THREAD_THRESHOLD: usize = 1 << 16;
 
-/// Result of the prefix-free parsing.
-/// - `prefix` contains the hash of the incomplete starting phrase and its length
-/// - `suffix` contains the hash of the the incomplete ending phrase and its length
-/// - `phrases` contains the hashes of the complete phrases, in their order of appearance
-/// - `phrases_len` contains the lengths of the corresponding phrases
+/// Partial phrase, represented by its hash and length.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Phrase {
+    hash: HT,
+    len: LT,
+}
+
+impl Phrase {
+    /// Creates a new [`Phrase`] with the given hash and length.
+    #[inline(always)]
+    pub const fn new(hash: HT, len: LT) -> Self {
+        Self { hash, len }
+    }
+
+    /// Hash of the phrase.
+    #[inline(always)]
+    pub const fn hash(&self) -> HT {
+        self.hash
+    }
+
+    /// Length of the phrase.
+    #[inline(always)]
+    pub const fn len(&self) -> LT {
+        self.len
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Merges two partial phrases overlapping by `overlap` characters.
+    #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
+    pub const fn merge(&self, other: &Self, overlap: usize) -> Self {
+        Self {
+            hash: merge_hashes(self.hash, other.hash, other.len as u32 - overlap as u32),
+            len: self.len + other.len - overlap as LT,
+        }
+    }
+}
+
+/// Prefix-free parse.
+#[derive(Debug, Clone)]
 pub struct Parse {
-    pub prefix: (HT, LT),
-    pub suffix: (HT, LT),
+    /// Window size.
+    pub w: usize,
+    /// Sampling factor of the windows.
+    pub p: usize,
+    /// Incomplete starting phrase (with its hash and length).
+    pub prefix: Phrase,
+    /// Incomplete ending phrase (with its hash and length).
+    pub suffix: Phrase,
+    /// Hashes of the complete phrases, in their order of appearance.
     pub phrases: Vec<HT>,
+    /// Lengths of the complete phrases, in their order of appearance.
     pub phrases_len: Vec<LT>,
 }
 
 impl Parse {
+    /// Creates an empty [`Parse`] with parameters `w` and `p`.
+    #[inline(always)]
+    pub fn new(w: usize, p: usize) -> Self {
+        Self {
+            w,
+            p,
+            prefix: Phrase::default(),
+            suffix: Phrase::default(),
+            phrases: Vec::new(),
+            phrases_len: Vec::new(),
+        }
+    }
+
     /// Number of complete phrases in the parse.
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -33,76 +93,106 @@ impl Parse {
         self.phrases.is_empty()
     }
 
+    /// Clears the phrases without reducing the capacity.
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.prefix = Phrase::default();
+        self.suffix = Phrase::default();
+        self.phrases.clear();
+        self.phrases_len.clear();
+    }
+
+    /// Reserves capacity for at least `additional` more phrases.
+    #[inline(always)]
+    pub fn reserve(&mut self, additional: usize) {
+        self.phrases.reserve(additional);
+        self.phrases_len.reserve(additional);
+    }
+
+    /// Extends with an existing [`Parse`], merging the current suffix with the next prefix in a new phrase.
+    #[inline(always)]
+    pub fn extend(&mut self, other: &Self) {
+        if self.is_empty() {
+            self.prefix = other.prefix;
+            self.suffix = other.suffix;
+            self.phrases.extend_from_slice(&other.phrases);
+            self.phrases_len.extend_from_slice(&other.phrases_len);
+        } else {
+            let border = self.suffix.merge(&other.prefix, self.w - 1);
+            self.suffix = if other.is_empty() {
+                border
+            } else {
+                self.phrases.push(border.hash);
+                self.phrases_len.push(border.len);
+                self.phrases.extend_from_slice(&other.phrases);
+                self.phrases_len.extend_from_slice(&other.phrases_len);
+                other.suffix
+            }
+        }
+    }
+
+    /// Extends with the [`Parse`] computed from `seq`, merging the current suffix with the next prefix in a new phrase.
+    #[inline(always)]
+    pub fn extend_from_seq(&mut self, seq: &[u8]) {
+        let num_phrases_upper_bound = seq.len() / self.p * 11 / 10;
+        let hash_bound = HT::MAX / self.p as HT + 1;
+        self.reserve(num_phrases_upper_bound);
+        let mut window_hash_it = RollingHashIterator::new(seq, self.w);
+        let mut phrase_hash = 0u64;
+        // we start at w - 1 because the very first iteration of the loop
+        // will always increment `phrase_len` even before we check if the
+        // hash is a trigger, and after that increment, we want the current
+        // phrase length to be `w`.
+        let mut phrase_len = self.w as LT - 1;
+
+        for window_hash in window_hash_it.by_ref() {
+            let long_hash = hash_one(window_hash);
+            phrase_hash = phrase_hash.rotate_left(1) ^ long_hash;
+            phrase_len += 1;
+            if window_hash < hash_bound {
+                let prefix = Phrase::new(phrase_hash, phrase_len);
+                if self.is_empty() {
+                    self.prefix = prefix;
+                } else {
+                    let border = self.suffix.merge(&prefix, self.w - 1);
+                    self.phrases.push(border.hash);
+                    self.phrases_len.push(border.len);
+                }
+                phrase_hash = long_hash;
+                phrase_len = self.w as LT;
+                break;
+            }
+        }
+        for window_hash in window_hash_it {
+            let long_hash = hash_one(window_hash);
+            phrase_hash = phrase_hash.rotate_left(1) ^ long_hash;
+            phrase_len += 1;
+            if window_hash < hash_bound {
+                self.phrases.push(phrase_hash);
+                self.phrases_len.push(phrase_len);
+                phrase_hash = long_hash;
+                phrase_len = self.w as LT;
+            }
+        }
+        self.suffix = Phrase::new(phrase_hash, phrase_len);
+    }
+
     // TODO methods to generate/extend a dictionary
 }
 
 /// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters.
 ///
-/// This is a wrapper for [`parse_seq_with_vec`] that allocates new vectors to store the parse.
+/// This is a wrapper for [`Parse::extend_from_seq`] that creates a new [`Parse`].
 #[inline(always)]
 pub fn parse_seq(seq: &[u8], w: usize, p: usize) -> Parse {
-    let mut phrases = Vec::new();
-    let mut phrases_len = Vec::new();
-    let (prefix, suffix) = parse_seq_with_vec(seq, w, p, &mut phrases, &mut phrases_len);
-
-    Parse {
-        prefix,
-        suffix,
-        phrases,
-        phrases_len,
-    }
-}
-
-/// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters, storing the resulting phrases in existing `Vec`.
-pub fn parse_seq_with_vec(
-    seq: &[u8],
-    w: usize,
-    p: usize,
-    vec_hash: &mut Vec<HT>,
-    vec_len: &mut Vec<LT>,
-) -> ((HT, LT), (HT, LT)) {
-    let expected_len = seq.len() / p * (w + 1) / w;
-    let hash_bound = HT::MAX / p as HT + 1;
-    vec_hash.reserve(expected_len);
-    vec_len.reserve(expected_len);
-    let mut window_hash_it = RollingHashIterator::new(seq, w);
-    let mut prefix = (0, 0);
-    let mut phrase_hash = 0u64;
-    // we start at w - 1 because the very first iteration of the loop
-    // will always increment `phrase_len` even before we check if the
-    // hash is a trigger, and after that increment, we want the current
-    // phrase length to be `w`.
-    let mut phrase_len = w as LT - 1;
-
-    for window_hash in window_hash_it.by_ref() {
-        let long_hash = hash_one(window_hash);
-        phrase_hash = phrase_hash.rotate_left(1) ^ long_hash;
-        phrase_len += 1;
-        if window_hash < hash_bound {
-            prefix = (phrase_hash, phrase_len);
-            phrase_hash = long_hash;
-            phrase_len = w as LT;
-            break;
-        }
-    }
-    for window_hash in window_hash_it {
-        let long_hash = hash_one(window_hash);
-        phrase_hash = phrase_hash.rotate_left(1) ^ long_hash;
-        phrase_len += 1;
-        if window_hash < hash_bound {
-            vec_hash.push(phrase_hash);
-            vec_len.push(phrase_len);
-            phrase_hash = long_hash;
-            phrase_len = w as LT;
-        }
-    }
-    let suffix = (phrase_hash, phrase_len);
-    (prefix, suffix)
+    let mut parse = Parse::new(w, p);
+    parse.extend_from_seq(seq);
+    parse
 }
 
 /// Splits a range into `num_ranges` evenly-sized ranges overlapping by `overlap`.
 ///
-/// When the length is not a multiple of `num_ranges`, the last range will contain slightly more values than the others.
+/// When the length is not a multiple of `num_ranges`, the last range will contain slightly less values than the others.
 #[inline(always)]
 pub fn overlapping_ranges(
     range: Range<usize>,
@@ -125,70 +215,51 @@ pub fn overlapping_ranges(
 ///
 /// Note that this will automatically switch to [`parse_seq`] if the sequence is short.
 ///
-/// This is a wrapper for [`parse_seq_par_with_vecs`] that allocates new vectors to store the parse.
+/// This is a wrapper for [`parse_seq_par_with`] that creates a temporary [`Parse`] for each thread.
 #[inline(always)]
 pub fn parse_seq_par(seq: &[u8], w: usize, p: usize, threads: usize) -> Parse {
-    if threads <= 1 || seq.len() <= SINGLE_THREAD_THRESHOLD {
-        return parse_seq(seq, w, p);
-    }
-
-    let mut vecs_hash = vec![vec![]; threads];
-    let mut vecs_len = vec![vec![]; threads];
-    parse_seq_par_with_vecs(seq, w, p, threads, &mut vecs_hash, &mut vecs_len)
+    let mut parse = Parse::new(w, p);
+    let mut temp_parses = Vec::new();
+    parse_seq_par_with(seq, threads, &mut parse, &mut temp_parses);
+    parse
 }
 
-/// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters, using multiple threads and storing the resulting phrases in existing `Vec`.
-///
-/// `vecs_hash` and `vecs_len` should contain at least `threads` vectors.
+/// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters, using multiple threads, storing temporary parses in `temp_parses` and extending `parse` with the final parse.
 ///
 /// Note that this will automatically switch to [`parse_seq`] if the sequence is short.
-pub fn parse_seq_par_with_vecs(
+pub fn parse_seq_par_with(
     seq: &[u8],
-    w: usize,
-    p: usize,
     threads: usize,
-    vecs_hash: &mut [Vec<HT>],
-    vecs_len: &mut [Vec<LT>],
-) -> Parse {
+    parse: &mut Parse,
+    temp_parses: &mut Vec<Parse>,
+) {
     if threads <= 1 || seq.len() <= SINGLE_THREAD_THRESHOLD {
-        return parse_seq(seq, w, p); // TODO avoid allocation?
+        parse.extend_from_seq(seq);
     }
 
-    let overlap = w as LT - 1;
-    let borders: Vec<_> = (
-        overlapping_ranges(0..seq.len(), threads, overlap as usize),
-        &mut vecs_hash[..threads],
-        &mut vecs_len[..threads],
+    if temp_parses.len() < threads {
+        temp_parses.resize_with(threads, || Parse::new(parse.w, parse.p));
+    }
+
+    (
+        overlapping_ranges(0..seq.len(), threads, parse.w - 1),
+        &mut temp_parses[..threads],
     )
         .into_par_iter()
-        .map(|(range, vec_hash, vec_len)| {
-            let (pref, suf) = parse_seq_with_vec(&seq[range], w, p, vec_hash, vec_len);
-            (pref, suf)
-        })
-        .collect();
+        .for_each(|(range, temp_parse)| {
+            temp_parse.clear();
+            temp_parse.extend_from_seq(&seq[range]);
+        });
 
-    let num_phrases = vecs_hash[..threads].iter().map(|v| v.len()).sum::<usize>() + threads - 1;
-    let mut phrases = Vec::with_capacity(num_phrases); // TODO avoid allocation?
-    let mut phrases_len = Vec::with_capacity(num_phrases);
-    phrases.extend(&vecs_hash[0]);
-    phrases_len.extend(&vecs_len[0]);
-    for i in 1..threads {
-        let (suffix_hash, suffix_len) = borders[i - 1].1;
-        let (prefix_hash, prefix_len) = borders[i].0;
-        #[allow(clippy::unnecessary_cast)]
-        let border_hash = merge_hashes(suffix_hash, prefix_hash, prefix_len as u32 - overlap);
-        let border_len = (suffix_len + prefix_len) - overlap;
-        phrases.push(border_hash);
-        phrases_len.push(border_len);
-        phrases.extend(&vecs_hash[i]);
-        phrases_len.extend(&vecs_len[i]);
-    }
-
-    Parse {
-        prefix: borders[0].0,
-        suffix: borders[threads - 1].1,
-        phrases,
-        phrases_len,
+    let num_phrases_upper_bound = temp_parses[..threads]
+        .iter()
+        .map(|temp_parse| temp_parse.len())
+        .sum::<usize>()
+        + threads
+        - 1;
+    parse.reserve(num_phrases_upper_bound);
+    for temp_parse in temp_parses.iter() {
+        parse.extend(temp_parse);
     }
 }
 

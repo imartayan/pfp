@@ -1,7 +1,7 @@
 use clap::Parser;
 use niffler::send::from_path;
 use pfp::hash::HT;
-use pfp::parse::{LT, parse_seq, parse_seq_par};
+use pfp::parse::{LT, Parse, parse_seq_par_with};
 use rayon::{ThreadPoolBuilder, current_num_threads};
 use seq_io::fasta::{self, Record};
 use std::path::Path;
@@ -15,10 +15,10 @@ struct Args {
     /// Input file (FASTA, possibly compressed)
     #[arg(short, long)]
     input: String,
-    /// window size
+    /// Window size
     #[arg(short, default_value_t = 10)]
     w: usize,
-    /// sparsity?
+    /// Sampling factor of the windows
     #[arg(short, default_value_t = 100)]
     p: usize,
     /// Number of threads [default: all]
@@ -29,6 +29,8 @@ struct Args {
 fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> (usize, Dict) {
     let mut num_phrases = 0;
     let mut dict = Dict::default();
+    let mut parse = Parse::new(w, p);
+    let mut temp_parses = Vec::new();
     let (reader, _) = from_path(path).expect("Failed to open input file");
     let mut reader = fasta::Reader::new(reader);
     while let Some(record) = reader.next() {
@@ -37,13 +39,10 @@ fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> (u
         for line in record.seq_lines() {
             seq.extend_from_slice(line);
         }
-        let parse = if threads > 1 {
-            parse_seq_par(&seq, w, p, threads)
-        } else {
-            parse_seq(&seq, w, p)
-        };
+        parse.clear();
+        parse_seq_par_with(&seq, threads, &mut parse, &mut temp_parses);
         num_phrases += parse.phrases.len();
-        dict.extend(parse.phrases.iter().copied().zip(parse.phrases_len));
+        dict.extend(parse.phrases.iter().zip(parse.phrases_len.iter()));
     }
     (num_phrases, dict)
 }

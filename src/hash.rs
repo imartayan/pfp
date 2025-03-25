@@ -7,7 +7,7 @@ use core::slice::Iter;
 pub type HT = u64;
 
 /// Multiplicative constant used for hashing (taken from [`FxHash`](https://docs.rs/rustc-hash/latest/rustc_hash/)).
-pub const MUL_HASH: HT = 0xf1357aea2e62a9c5;
+pub(crate) const MUL_HASH: HT = 0xf1357aea2e62a9c5;
 
 /// Hash a single integer.
 #[inline(always)]
@@ -19,7 +19,7 @@ pub(crate) const fn hash_one(x: HT) -> HT {
 ///
 /// `merge_hashes(hash("AB"), hash("CDE"), 3) == hash("ABCDE")`
 #[inline(always)]
-pub const fn merge_hashes(h1: HT, h2: HT, h2_length: u32) -> HT {
+pub(crate) const fn merge_hashes(h1: HT, h2: HT, h2_length: u32) -> HT {
     h1.rotate_left(h2_length) ^ h2
 }
 
