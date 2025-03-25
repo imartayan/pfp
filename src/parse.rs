@@ -51,6 +51,15 @@ impl Phrase {
     }
 }
 
+impl rdst::RadixKey for Phrase {
+    const LEVELS: usize = HT::BITS as usize / 8;
+
+    #[inline]
+    fn get_level(&self, level: usize) -> u8 {
+        (self.hash() >> (level * 8)) as u8
+    }
+}
+
 /// Prefix-free parse.
 #[derive(Debug, Clone)]
 pub struct Parse {
