@@ -1,13 +1,15 @@
 use clap::Parser;
 use niffler::send::from_path;
-use pfp::hash::HT;
-use pfp::parse::{LT, Parse, parse_seq_par_with};
+use pfp::parse::{Parse, Phrase, parse_seq_par_with};
+use rayon::prelude::*;
 use rayon::{ThreadPoolBuilder, current_num_threads};
+use rdst::RadixSort;
 use seq_io::fasta::{self, Record};
 use std::path::Path;
 use std::time::Instant;
 
-type Dict = std::collections::HashMap<HT, LT, rustc_hash::FxBuildHasher>;
+// type Dict = std::collections::HashMap<HT, LT, rustc_hash::FxBuildHasher>;
+type Dict = Vec<Phrase>;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -42,8 +44,11 @@ fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> (u
         parse.clear();
         parse_seq_par_with(&seq, threads, &mut parse, &mut temp_parses);
         num_phrases += parse.phrases.len();
-        dict.extend(parse.phrases.iter().zip(parse.phrases_len.iter()));
+        // dict.extend(parse.phrases.iter().zip(parse.phrases_len.iter()));
+        dict.par_extend(parse.par_iter());
     }
+    dict.radix_sort_unstable();
+    dict.dedup_by_key(|phrase| phrase.hash());
     (num_phrases, dict)
 }
 
@@ -70,7 +75,11 @@ fn main() {
     let elapsed = start_parse.elapsed().as_secs_f64();
     eprintln!("Parsed in {:.02} s", elapsed);
     let num_distinct_phrases = dict.len();
-    let len_distinct_phrases = dict.into_values().map(|len| len as usize).sum::<usize>();
+    // let len_distinct_phrases = dict.into_values().map(|len| len as usize).sum::<usize>();
+    let len_distinct_phrases = dict
+        .iter()
+        .map(|phrase| phrase.len() as usize)
+        .sum::<usize>();
     eprintln!("number of phrases (w/ rep) = {num_phrases}");
     eprintln!("number of distinct phrases = {num_distinct_phrases}");
     eprintln!("length of distinct phrases = {len_distinct_phrases}");
