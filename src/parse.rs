@@ -2,7 +2,7 @@
 
 use crate::hash::{HT, RollingHashIterator, hash_one, merge_hashes};
 use core::ops::Range;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 
 /// Integer type for phrase length.
 pub type LT = u32;
@@ -132,7 +132,6 @@ impl Parse {
     }
 
     /// Extends with the [`Parse`] computed from `seq`, merging the current suffix with the next prefix in a new phrase.
-    #[inline(always)]
     pub fn extend_from_seq(&mut self, seq: &[u8]) {
         let num_phrases_upper_bound = seq.len() / self.p * 11 / 10;
         let hash_bound = HT::MAX / self.p as HT + 1;
@@ -177,6 +176,14 @@ impl Parse {
         self.suffix = Phrase::new(phrase_hash, phrase_len);
     }
 
+    /// Parallel iterator over the complete phrases of the parse represented as [`Phrase`].
+    #[inline(always)]
+    pub fn par_iter(&self) -> impl IntoParallelIterator<Item = Phrase> {
+        self.phrases
+            .par_iter()
+            .zip(self.phrases_len.par_iter())
+            .map(|(&hash, &len)| Phrase::new(hash, len))
+    }
     // TODO methods to generate/extend a dictionary
 }
 
