@@ -16,6 +16,7 @@ rustc-hash = "2.1"
 seq_io = "0.3"
 
 [features]
+default = ["radix"]
 radix = ["dep:rdst"]
 
 [profile.release]
