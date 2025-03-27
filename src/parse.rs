@@ -10,7 +10,7 @@ pub type LT = u32;
 const SINGLE_THREAD_THRESHOLD: usize = 1 << 16;
 
 /// Partial phrase, represented by its hash and length.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Phrase {
     hash: HT,
     len: LT,
@@ -51,6 +51,7 @@ impl Phrase {
     }
 }
 
+#[cfg(feature = "radix")]
 impl rdst::RadixKey for Phrase {
     const LEVELS: usize = HT::BITS as usize / 8;
 

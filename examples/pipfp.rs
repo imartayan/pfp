@@ -3,6 +3,7 @@ use niffler::send::from_path;
 use pfp::parse::{Parse, Phrase, parse_seq_par_with};
 use rayon::prelude::*;
 use rayon::{ThreadPoolBuilder, current_num_threads};
+#[cfg(feature = "radix")]
 use rdst::RadixSort;
 use seq_io::fasta::{self, Record};
 use std::path::Path;
@@ -47,7 +48,10 @@ fn parse_file<P: AsRef<Path>>(w: usize, p: usize, path: P, threads: usize) -> (u
         // dict.extend(parse.phrases.iter().zip(parse.phrases_len.iter()));
         dict.par_extend(parse.par_iter());
     }
+    #[cfg(feature = "radix")]
     dict.radix_sort_unstable();
+    #[cfg(not(feature = "radix"))]
+    dict.par_sort_unstable();
     dict.dedup_by_key(|phrase| phrase.hash());
     (num_phrases, dict)
 }
