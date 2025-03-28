@@ -4,13 +4,33 @@ use crate::hash::{HT, RollingHashIterator, hash_one, merge_hashes};
 use core::ops::Range;
 use rayon::prelude::*;
 
+#[cfg(feature = "mphf")]
+use cacheline_ef::CachelineEfVec;
+#[cfg(feature = "epserde")]
+use epserde::prelude::*;
+#[cfg(feature = "mphf")]
+use ptr_hash::{PtrHash, PtrHashParams, bucket_fn::Linear, hash::FxHash};
+#[cfg(feature = "radix")]
+use rdst::RadixSort;
+
 /// Integer type for phrase length.
 pub type LT = u32;
 
+#[cfg(feature = "mphf")]
+pub type MPHF = PtrHash<u64, Linear, CachelineEfVec, FxHash>;
+
 const SINGLE_THREAD_THRESHOLD: usize = 1 << 16;
+
+#[cfg(feature = "mphf")]
+const LEN_BITS: usize = 20;
+#[cfg(feature = "mphf")]
+const LEN_MASK: u64 = (1 << LEN_BITS) - 1;
 
 /// Partial phrase, represented by its hash and length.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "epserde", derive(Epserde))]
+#[cfg_attr(feature = "epserde", repr(C))]
+#[cfg_attr(feature = "epserde", zero_copy)]
 pub struct Phrase {
     hash: HT,
     len: LT,
@@ -64,6 +84,7 @@ impl rdst::RadixKey for Phrase {
 
 /// Prefix-free parse.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "epserde", derive(Epserde))]
 pub struct Parse {
     /// Window size.
     pub w: usize,
@@ -205,6 +226,55 @@ impl Parse {
             .zip(self.phrases_len.par_iter())
             .map(|(&hash, &len)| Phrase::new(hash, len))
     }
+
+    #[inline(always)]
+    fn _unique_hashes(&self) -> Vec<HT> {
+        let mut hashes = self.phrases.clone();
+        #[cfg(feature = "radix")]
+        hashes.radix_sort_unstable();
+        #[cfg(not(feature = "radix"))]
+        hashes.par_sort_unstable();
+        hashes.dedup();
+        hashes
+    }
+
+    #[cfg(feature = "mphf")]
+    pub fn build_compact(&self) -> CompactParse {
+        let unique_hashes = self._unique_hashes();
+        let mphf = PtrHash::new(&unique_hashes, PtrHashParams::default_fast());
+        let mut phrases = Vec::with_capacity(self.len());
+        let mut hashes = vec![HT::MAX; unique_hashes.len()];
+        let mut locations = vec![u64::MAX; unique_hashes.len()];
+        let mut iter = self.iter();
+        let idx_stream = mphf.index_stream::<32, true, _>(self.phrases.iter());
+        idx_stream.fold(0, |start, idx| {
+            let phrase = iter.next().unwrap();
+            phrases.push(idx as u32);
+            hashes[idx] = phrase.hash();
+            debug_assert!(phrase.len() as u64 <= LEN_MASK);
+            locations[idx] = (start << LEN_BITS) | phrase.len() as u64;
+            start + phrase.len() as u64
+        });
+        CompactParse {
+            prefix: self.prefix,
+            suffix: self.suffix,
+            mphf,
+            phrases,
+            hashes,
+            locations,
+        }
+    }
+}
+
+#[cfg_attr(feature = "mphf", derive(Epserde))]
+#[cfg(feature = "mphf")]
+pub struct CompactParse {
+    pub prefix: Phrase,
+    pub suffix: Phrase,
+    pub mphf: MPHF,
+    pub phrases: Vec<u32>,
+    pub hashes: Vec<HT>,
+    pub locations: Vec<u64>,
 }
 
 /// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters.
@@ -304,6 +374,9 @@ pub struct ParseIterator<'a> {
 }
 
 impl<'a> ParseIterator<'a> {
+    /// Creates a new [`ParseIterator`], yielding complete phrases as [`Phrase`].
+    /// The incomplete starting phrase is written to `prefix` at the creation of the iterator.
+    /// The incomplete ending phrase is written to `suffix` when the iterator is **exhausted**.
     #[inline]
     pub fn new(
         seq: &'a [u8],
