@@ -35,6 +35,7 @@ impl Phrase {
         self.len
     }
 
+    /// Returns true if the phrase is empty.
     #[inline(always)]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
@@ -98,6 +99,7 @@ impl Parse {
         self.phrases.len()
     }
 
+    /// Returns true if the parse has no complete phrases.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.phrases.is_empty()
@@ -186,6 +188,15 @@ impl Parse {
         self.suffix = Phrase::new(phrase_hash, phrase_len);
     }
 
+    /// Iterator over the complete phrases of the parse represented as [`Phrase`].
+    #[inline(always)]
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Phrase> {
+        self.phrases
+            .iter()
+            .zip(self.phrases_len.iter())
+            .map(|(&hash, &len)| Phrase::new(hash, len))
+    }
+
     /// Parallel iterator over the complete phrases of the parse represented as [`Phrase`].
     #[inline(always)]
     pub fn par_iter(&self) -> impl IntoParallelIterator<Item = Phrase> {
@@ -194,7 +205,6 @@ impl Parse {
             .zip(self.phrases_len.par_iter())
             .map(|(&hash, &len)| Phrase::new(hash, len))
     }
-    // TODO methods to generate/extend a dictionary
 }
 
 /// Computes the parse a sequence with windows of size `w` and a fraction 1/`p` of windows acting as delimiters.
@@ -290,7 +300,7 @@ pub struct ParseIterator<'a> {
     hash_bound: HT,
     w: usize,
     p: usize,
-    suffix: &'a mut (HT, LT),
+    suffix: &'a mut Phrase,
 }
 
 impl<'a> ParseIterator<'a> {
@@ -299,19 +309,19 @@ impl<'a> ParseIterator<'a> {
         seq: &'a [u8],
         w: usize,
         p: usize,
-        prefix: &'a mut (HT, LT),
-        suffix: &'a mut (HT, LT),
+        prefix: &'a mut Phrase,
+        suffix: &'a mut Phrase,
     ) -> Self {
         let mut window_hash_it = RollingHashIterator::new(seq, w);
         let mut phrase_hash = 0u64;
-        let mut phrase_len = 0;
+        let mut phrase_len = w as LT - 1;
         let hash_bound = HT::MAX / p as HT + 1;
         for window_hash in window_hash_it.by_ref() {
             let long_hash = hash_one(window_hash);
             phrase_hash = phrase_hash.rotate_left(1) ^ long_hash;
             phrase_len += 1;
             if window_hash < hash_bound {
-                *prefix = (phrase_hash, phrase_len);
+                *prefix = Phrase::new(phrase_hash, phrase_len);
                 phrase_hash = long_hash;
                 phrase_len = w as LT;
                 break;
@@ -330,7 +340,7 @@ impl<'a> ParseIterator<'a> {
 }
 
 impl Iterator for ParseIterator<'_> {
-    type Item = (HT, LT);
+    type Item = Phrase;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -339,13 +349,13 @@ impl Iterator for ParseIterator<'_> {
             self.phrase_hash = self.phrase_hash.rotate_left(1) ^ long_hash;
             self.phrase_len += 1;
             if window_hash < self.hash_bound {
-                let res = (self.phrase_hash, self.phrase_len);
+                let res = Phrase::new(self.phrase_hash, self.phrase_len);
                 self.phrase_hash = long_hash;
                 self.phrase_len = self.w as LT;
                 return Some(res);
             }
         }
-        *self.suffix = (self.phrase_hash, self.phrase_len);
+        *self.suffix = Phrase::new(self.phrase_hash, self.phrase_len);
         None
     }
 
@@ -394,6 +404,26 @@ mod tests {
             assert_eq!(parse.suffix, parse_par.suffix);
             assert_eq!(parse.phrases, parse_par.phrases);
             assert_eq!(parse.phrases_len, parse_par.phrases_len);
+        }
+    }
+
+    #[test]
+    fn test_parse_iter() {
+        const LEN: usize = 1_000_000;
+        let mut seq = vec![0u8; LEN];
+        fastrand::fill(&mut seq);
+
+        for window_size in 1..=50 {
+            let parse = parse_seq(&seq, window_size, 100);
+            let prefix = &mut Phrase::default();
+            let suffix = &mut Phrase::default();
+            let mut parse_iter = ParseIterator::new(&seq, window_size, 100, prefix, suffix);
+            for phrase in parse.iter() {
+                assert_eq!(parse_iter.next(), Some(phrase));
+            }
+            assert_eq!(parse_iter.next(), None);
+            assert_eq!(parse.prefix, *prefix);
+            assert_eq!(parse.suffix, *suffix);
         }
     }
 }
