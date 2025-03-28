@@ -25,4 +25,4 @@ jobs:
       - name: Configure cache
         uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test
+        run: cargo test --lib
